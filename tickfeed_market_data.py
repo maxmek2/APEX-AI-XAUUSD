@@ -40,7 +40,8 @@ def _headers() -> dict[str, str]:
         )
 
     return {
-        "X-API-Key": mdp_XDcYsHkqg_9jqodgQCKSlZafMbA8oTJW5wn-S_sy5mY
+        "X-API-Key":curl -H "X-API-Key: $TICKFEED_KEY" \
+  https://api.tickfeed.pro/v1/price/XAUUSD
     }
 
 
