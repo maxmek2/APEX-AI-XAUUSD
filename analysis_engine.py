@@ -15,10 +15,12 @@ from indicators import (
 
 
 # ==========================================
-# APEX AI STAGE 11B-3.2
+# APEX AI STAGE 3.4
+# Diagnostic improvement only.
+# Entry, scoring, risk and execution rules unchanged.
 # ==========================================
 
-STRATEGY_VERSION = "STAGE_11B_3_3_ICT_DIAGNOSTICS"
+STRATEGY_VERSION = "STAGE_3_4_ICT_DIAGNOSTICS"
 
 ATR_MULTIPLIER = 1.5
 RISK_REWARD = 2.0
@@ -967,7 +969,88 @@ def analyze(
             grade = "NO_TRADE"
             stop_loss = None
 
-    # Diagnostics.
+    # ==========================================
+    # STAGE 3.4 DIAGNOSTICS
+    # Diagnostic detail only; no entry rules changed.
+    # ==========================================
+
+    def build_gate_diagnostics(
+        direction: str,
+        checks: dict,
+        sequence_valid: bool,
+        mandatory_passed: bool,
+        signal_passed: bool,
+        signal_score: int,
+        displacement_result: dict,
+    ) -> dict:
+
+        structure_key = (
+            "bullish_structure"
+            if direction == "bullish"
+            else "bearish_structure"
+        )
+
+        position_key = (
+            "price_above_ema20"
+            if direction == "bullish"
+            else "price_below_ema20"
+        )
+
+        trend_key = "ema_" + direction
+
+        structure_or_displacement_passed = (
+            checks[structure_key]
+            or displacement_result["valid"]
+        )
+
+        return {
+            "sequence_valid": sequence_valid,
+            "mandatory_passed": mandatory_passed,
+            "mandatory_failed": not mandatory_passed,
+            "score": signal_score,
+            "minimum_score": MIN_SIGNAL_SCORE,
+            "score_passed": signal_score >= MIN_SIGNAL_SCORE,
+            "signal_passed": signal_passed,
+
+            "failed_checks": [
+                key
+                for key, value in checks.items()
+                if not value
+            ],
+
+            "mandatory_failure_reasons": {
+                "trend_ema": not checks[trend_key],
+                "price_position": not checks[position_key],
+                "structure_and_displacement": (
+                    not structure_or_displacement_passed
+                ),
+            },
+
+            "market_context": {
+                "ema20": e20_now,
+                "ema50": e50_now,
+                "ema_bias": bias,
+                "last_close": last.close,
+                "rsi14": rsi_now,
+                "atr14": atr_now,
+                "structure_bias": structure["structure_bias"],
+                "previous_structure_bias": structure[
+                    "previous_structure_bias"
+                ],
+                "latest_swing_high": structure[
+                    "latest_swing_high"
+                ],
+                "latest_swing_low": structure[
+                    "latest_swing_low"
+                ],
+                "break_level": structure["break_level"],
+                "price_above_ema20": above,
+                "price_below_ema20": below,
+            },
+
+            "displacement_detail": displacement_result,
+        }
+
     diagnostics = {
         "buy": {
             "score": buy_score,
@@ -977,9 +1060,20 @@ def analyze(
             "mandatory_conditions_passed": buy_mandatory,
             "checks": buy_checks,
             "failed_checks": [
-                key for key, value in buy_checks.items() if not value
+                key for key, value in buy_checks.items()
+                if not value
             ],
+            "sequence_gate": build_gate_diagnostics(
+                "bullish",
+                buy_checks,
+                bull_sequence,
+                buy_mandatory,
+                buy,
+                buy_score,
+                bull_disp,
+            ),
         },
+
         "sell": {
             "score": sell_score,
             "total": 100,
@@ -988,8 +1082,18 @@ def analyze(
             "mandatory_conditions_passed": sell_mandatory,
             "checks": sell_checks,
             "failed_checks": [
-                key for key, value in sell_checks.items() if not value
+                key for key, value in sell_checks.items()
+                if not value
             ],
+            "sequence_gate": build_gate_diagnostics(
+                "bearish",
+                sell_checks,
+                bear_sequence,
+                sell_mandatory,
+                sell,
+                sell_score,
+                bear_disp,
+            ),
         },
     }
 
@@ -1000,9 +1104,9 @@ def analyze(
         "signal_grade": grade,
 
         "reason": (
-            "Stage 11B-3.3 ICT scalping conditions passed"
+            "Stage 3.4 ICT scalping conditions passed"
             if signal != "NO_TRADE"
-            else "Stage 11B-3.3 ICT confluence conditions incomplete"
+            else "Stage 3.4 ICT confluence conditions incomplete"
         ),
 
         "bias_ema20_50": bias,
