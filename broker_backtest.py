@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from math import isfinite
-from statistics import mean
 
 from analysis_engine import analyze
 from broker_execution import calculate_position_size
@@ -27,12 +26,13 @@ def _validate(candles, starting_balance, risk_percent, spread_usd,
         raise ValueError("Execution costs cannot be negative")
     if commission_rate_per_side >= 0.01:
         raise ValueError("commission_rate_per_side must be below 1%")
-    if isinstance(max_holding_bars, bool) or max_holding_bars < 1:
+    if isinstance(max_holding_bars, bool) or not isinstance(max_holding_bars, int) or max_holding_bars < 1:
         raise ValueError("max_holding_bars must be a positive integer")
 
 
-def _closed_htf_at(bars, close_times, timestamp):
-    return bars[:bisect_right(close_times, timestamp)]
+def _closed_htf_at(bars, close_times, timestamp, max_bars):
+    end = bisect_right(close_times, timestamp)
+    return bars[max(0, end - max_bars):end]
 
 
 def run_broker_backtest(
@@ -140,8 +140,8 @@ def run_broker_backtest(
             continue
 
         history = candles[max(0, i - 299):i + 1]
-        m15 = _closed_htf_at(m15_bars, m15_close_times, bar.close_time)
-        h1 = _closed_htf_at(h1_bars, h1_close_times, bar.close_time)
+        m15 = _closed_htf_at(m15_bars, m15_close_times, bar.close_time, 160)
+        h1 = _closed_htf_at(h1_bars, h1_close_times, bar.close_time, 100)
         if len(m15) < 60 or len(h1) < 60:
             continue
 
