@@ -264,19 +264,17 @@ def swing_levels(
 # 5. ICT LIQUIDITY SWEEP DETECTION
 # ==========================================
 
+
 def liquidity_sweeps(
     candles: list[Candle],
     lookback: int = 30,
     recent_bars: int = 3,
 ):
-
     if lookback < 1:
         raise ValueError("Lookback must be positive")
 
     if recent_bars < 1:
-        raise ValueError(
-            "recent_bars must be positive"
-        )
+        raise ValueError("recent_bars must be positive")
 
     result = {
         "bullish": False,
@@ -287,6 +285,8 @@ def liquidity_sweeps(
         "bearish_sweep_index": None,
         "bullish_sweep_age": None,
         "bearish_sweep_age": None,
+        "bullish_sweep_indices": [],
+        "bearish_sweep_indices": [],
         "lookback": lookback,
         "recent_bars": recent_bars,
     }
@@ -299,9 +299,7 @@ def liquidity_sweeps(
         len(candles) - recent_bars,
     )
 
-    # Examine only the most recent candidate candles.
     for i in range(start_index, len(candles)):
-
         candidate = candles[i]
 
         prior_start = i - lookback
@@ -330,18 +328,18 @@ def liquidity_sweeps(
         age = len(candles) - 1 - i
 
         if bullish_sweep:
-
             result["bullish"] = True
             result["swept_low"] = prior_low
             result["bullish_sweep_index"] = i
             result["bullish_sweep_age"] = age
+            result["bullish_sweep_indices"].append(i)
 
         if bearish_sweep:
-
             result["bearish"] = True
             result["swept_high"] = prior_high
             result["bearish_sweep_index"] = i
             result["bearish_sweep_age"] = age
+            result["bearish_sweep_indices"].append(i)
 
     return result
 
