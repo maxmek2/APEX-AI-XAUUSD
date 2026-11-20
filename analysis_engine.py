@@ -999,6 +999,56 @@ def analyze(
             grade = "NO_TRADE"
             stop_loss = None
 
+    # Stage 3.9: explain each mandatory gate without changing signal rules.
+    buy_mandatory_components = {
+        "ema_bullish": bool(buy_checks["ema_bullish"]),
+        "price_above_ema20": bool(above),
+        "valid_sweep_fvg_sequence": bool(bull_sequence),
+        "structure_or_latest_displacement": bool(
+            bull_structure or bull_disp["valid"]
+        ),
+        "structure_component": bool(bull_structure),
+        "latest_candle_displacement_component": bool(bull_disp["valid"]),
+    }
+    sell_mandatory_components = {
+        "ema_bearish": bool(sell_checks["ema_bearish"]),
+        "price_below_ema20": bool(below),
+        "valid_sweep_fvg_sequence": bool(bear_sequence),
+        "structure_or_latest_displacement": bool(
+            bear_structure or bear_disp["valid"]
+        ),
+        "structure_component": bool(bear_structure),
+        "latest_candle_displacement_component": bool(bear_disp["valid"]),
+    }
+
+    def mandatory_gate_status(components: dict) -> dict:
+        failed = [key for key, value in components.items() if not value]
+        return {
+            "passed": not failed,
+            "components": components,
+            "failed_components": failed,
+            "logic": "EMA AND price_position AND valid_sweep_FVG_sequence AND (structure OR latest_candle_displacement)",
+            "diagnostic_only": True,
+        }
+
+    market_context = {
+        "ema20": e20_now,
+        "ema50": e50_now,
+        "ema_bias": bias,
+        "last_close": last.close,
+        "rsi14": rsi_now,
+        "atr14": atr_now,
+        "structure_bias": structure.get("structure_bias"),
+        "previous_structure_bias": structure.get("previous_structure_bias"),
+        "latest_swing_high": structure.get("latest_swing_high"),
+        "latest_swing_low": structure.get("latest_swing_low"),
+        "break_level": structure.get("break_level"),
+        "bullish_fresh_break": structure.get("bullish_fresh_break"),
+        "bearish_fresh_break": structure.get("bearish_fresh_break"),
+        "above_ema20": bool(above),
+        "below_ema20": bool(below),
+    }
+
     # Diagnostics.
     diagnostics = {
         "buy": {
@@ -1011,6 +1061,10 @@ def analyze(
             "failed_checks": [
                 key for key, value in buy_checks.items() if not value
             ],
+            "mandatory_gate_detail": mandatory_gate_status(buy_mandatory_components),
+            "market_context": market_context,
+            "latest_candle_displacement": bull_disp,
+            "fvg_displacement": bull_fvg_q.get("displacement"),
         },
         "sell": {
             "score": sell_score,
@@ -1022,6 +1076,10 @@ def analyze(
             "failed_checks": [
                 key for key, value in sell_checks.items() if not value
             ],
+            "mandatory_gate_detail": mandatory_gate_status(sell_mandatory_components),
+            "market_context": market_context,
+            "latest_candle_displacement": bear_disp,
+            "fvg_displacement": bear_fvg_q.get("displacement"),
         },
     }
 
