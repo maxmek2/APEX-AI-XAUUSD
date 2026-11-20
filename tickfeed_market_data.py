@@ -40,9 +40,6 @@ def _headers() -> dict[str, str]:
         )
 
     return {
-        "X-API-Key":curl -H "X-API-Key: $TICKFEED_KEY" \
-  https://api.tickfeed.pro/v1/price/XAUUSD
-    }
 
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: float = 15.0) -> dict:
