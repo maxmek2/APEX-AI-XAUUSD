@@ -8,6 +8,17 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from threading import RLock
 from time import time, localtime, strftime
+from math import isfinite
+
+
+def _finite_number(name: str, value: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a finite number") from exc
+    if not isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
 
 
 @dataclass
@@ -36,6 +47,12 @@ class PaperEngine:
         fee_rate: float = 0.001,
     ):
 
+        starting_balance = _finite_number("Starting balance", starting_balance)
+        risk_fraction = _finite_number("Risk fraction", risk_fraction)
+        max_total_risk_fraction = _finite_number("Maximum total risk", max_total_risk_fraction)
+        daily_loss_fraction = _finite_number("Daily loss fraction", daily_loss_fraction)
+        fee_rate = _finite_number("Fee rate", fee_rate)
+
         if starting_balance <= 0:
             raise ValueError("Starting balance must be positive")
 
@@ -48,6 +65,8 @@ class PaperEngine:
         if not 0 < daily_loss_fraction <= 0.10:
             raise ValueError("Daily loss limit must be between 0 and 10%")
 
+        if isinstance(max_positions, bool) or not isinstance(max_positions, int):
+            raise ValueError("Maximum positions must be a positive integer")
         if max_positions < 1:
             raise ValueError("Maximum positions must be at least 1")
 
@@ -118,6 +137,12 @@ class PaperEngine:
         stop: float,
         target: float,
     ) -> dict:
+
+        if not isinstance(symbol, str) or not isinstance(side, str):
+            raise ValueError("Symbol and side must be strings")
+        entry = _finite_number("Entry price", entry)
+        stop = _finite_number("Stop loss", stop)
+        target = _finite_number("Take profit", target)
 
         side = side.upper()
         symbol = symbol.upper()
@@ -239,6 +264,7 @@ class PaperEngine:
         exit_price: float,
     ) -> dict:
 
+        exit_price = _finite_number("Exit price", exit_price)
         if exit_price <= 0:
             raise ValueError("Exit price must be positive")
 
@@ -314,6 +340,9 @@ class PaperEngine:
         It does not run automatically by itself.
         """
 
+        if not isinstance(symbol, str):
+            raise ValueError("Symbol must be a string")
+        market_price = _finite_number("Market price", market_price)
         if market_price <= 0:
             raise ValueError("Market price must be positive")
 
