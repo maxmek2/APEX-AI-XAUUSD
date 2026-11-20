@@ -32,8 +32,8 @@ class TickFeedError(RuntimeError):
 
 
 def _headers() -> dict[str, str]:
-    key = os.getenv("TICKFEED_API_KEY", "mdp_XDcYsH").strip()
-    return {"X-API-Key":mdp_XDcYsH} if key else {}
+    key = os.getenv("TICKFEED_API_KEY", "").strip()
+    return {"X-API-Key":} if key else {}
 
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: float = 15.0) -> dict:
