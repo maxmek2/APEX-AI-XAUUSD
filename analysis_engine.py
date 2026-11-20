@@ -18,7 +18,7 @@ from indicators import (
 # APEX AI STAGE 11B-3.2
 # ==========================================
 
-STRATEGY_VERSION = "STAGE_11B_3_2_ICT_SCALPING"
+STRATEGY_VERSION = "STAGE_11B_3_3_ICT_DIAGNOSTICS"
 
 ATR_MULTIPLIER = 1.5
 RISK_REWARD = 2.0
@@ -172,9 +172,14 @@ def fvg_quality(
         "formation_index": None,
         "displacement_index": None,
         "formation_atr": None,
+        "size_passed": False,
+        "displacement_passed": False,
+        "mitigation_passed": False,
+        "failure_reasons": [],
     }
 
     if not details:
+        result["failure_reasons"] = ["no_fvg_details"]
         return result
 
     low = details.get("zone_low")
@@ -186,36 +191,31 @@ def fvg_quality(
         and valid_number(high)
         and isinstance(idx, int)
         and not isinstance(idx, bool)
+        and 0 <= idx < len(candles)
     ):
+        result["failure_reasons"] = ["invalid_fvg_details"]
         return result
 
-    # Three-candle FVG:
-    # Candle 1 = first candle
-    # Candle 2 = displacement candle
-    # Candle 3 = FVG confirmation candle.
+    # In a three-candle FVG, the middle candle is the displacement candle.
     displacement_idx = idx - 1
 
-    if (
-        displacement_idx < 0
-        or idx >= len(candles)
-        or displacement_idx >= len(atr_values)
-    ):
+    if displacement_idx < 0 or displacement_idx >= len(atr_values):
+        result["failure_reasons"] = ["invalid_displacement_index"]
         return result
 
     atr_at_displacement = atr_values[displacement_idx]
 
-    if (
-        not valid_number(atr_at_displacement)
-        or atr_at_displacement <= MIN_ATR
-    ):
+    if not valid_number(atr_at_displacement) or atr_at_displacement <= MIN_ATR:
+        result["failure_reasons"] = ["invalid_atr_at_displacement"]
         return result
 
     size = high - low
-
     if size <= 0:
+        result["failure_reasons"] = ["invalid_fvg_zone_size"]
         return result
 
     size_atr = size / atr_at_displacement
+    size_passed = size_atr >= MIN_FVG_SIZE_ATR
 
     displacement = displacement_check(
         candles[displacement_idx],
@@ -224,15 +224,19 @@ def fvg_quality(
     )
 
     status = details.get("status")
+    mitigation_passed = status in ("UNTOUCHED", "PARTIAL")
+    displacement_passed = displacement["valid"]
 
-    valid = (
-        size_atr >= MIN_FVG_SIZE_ATR
-        and displacement["valid"]
-        and status in ("UNTOUCHED", "PARTIAL")
-    )
+    failures = []
+    if not size_passed:
+        failures.append("fvg_too_small")
+    if not displacement_passed:
+        failures.append("displacement_failed")
+    if not mitigation_passed:
+        failures.append("fvg_fully_mitigated")
 
     result.update({
-        "valid": valid,
+        "valid": size_passed and displacement_passed and mitigation_passed,
         "zone_size": size,
         "zone_size_atr": size_atr,
         "displacement": displacement,
@@ -240,6 +244,10 @@ def fvg_quality(
         "formation_index": idx,
         "displacement_index": displacement_idx,
         "formation_atr": atr_at_displacement,
+        "size_passed": size_passed,
+        "displacement_passed": displacement_passed,
+        "mitigation_passed": mitigation_passed,
+        "failure_reasons": failures,
     })
 
     return result
@@ -353,13 +361,10 @@ def find_sequence_fvgs(
     sweep_index: int | None,
     bullish: bool,
 ) -> list[dict]:
-    """
-    Return all valid, not-fully-mitigated FVG zones formed
-    after the sweep and within MAX_SWEEP_FVG_GAP bars.
+    """Return every FVG formed after a sweep within the configured gap.
 
-    Results are ordered newest first so the strategy prefers
-    the most recent qualifying setup, but can fall back to an
-    earlier FVG if the newer one fails its quality test.
+    Includes fully mitigated zones so diagnostics can explain why a
+    candidate was rejected. Results are newest first.
     """
 
     if (
@@ -370,61 +375,42 @@ def find_sequence_fvgs(
         return []
 
     start = max(2, sweep_index + 1)
-    end = min(
-        len(candles) - 1,
-        sweep_index + MAX_SWEEP_FVG_GAP,
-    )
-
+    end = min(len(candles) - 1, sweep_index + MAX_SWEEP_FVG_GAP)
     found = []
 
     for i in range(end, start - 1, -1):
-
         first = candles[i - 2]
         third = candles[i]
 
         if bullish:
             if third.low <= first.high:
                 continue
-
-            zone_low = first.high
-            zone_high = third.low
-
-            later_lows = [
-                candle.low for candle in candles[i + 1:]
-            ]
-
-            if any(value <= zone_low for value in later_lows):
+            zone_low, zone_high = first.high, third.low
+            later_values = [c.low for c in candles[i + 1:]]
+            if any(value <= zone_low for value in later_values):
                 status = "FULL"
-            elif any(value < zone_high for value in later_lows):
+            elif any(value < zone_high for value in later_values):
                 status = "PARTIAL"
             else:
                 status = "UNTOUCHED"
-
         else:
             if third.high >= first.low:
                 continue
-
-            zone_low = third.high
-            zone_high = first.low
-
-            later_highs = [
-                candle.high for candle in candles[i + 1:]
-            ]
-
-            if any(value >= zone_high for value in later_highs):
+            zone_low, zone_high = third.high, first.low
+            later_values = [c.high for c in candles[i + 1:]]
+            if any(value >= zone_high for value in later_values):
                 status = "FULL"
-            elif any(value > zone_low for value in later_highs):
+            elif any(value > zone_low for value in later_values):
                 status = "PARTIAL"
             else:
                 status = "UNTOUCHED"
 
-        if status in ("UNTOUCHED", "PARTIAL"):
-            found.append({
-                "zone_low": zone_low,
-                "zone_high": zone_high,
-                "formation_index": i,
-                "status": status,
-            })
+        found.append({
+            "zone_low": zone_low,
+            "zone_high": zone_high,
+            "formation_index": i,
+            "status": status,
+        })
 
     return found
 
@@ -434,17 +420,8 @@ def find_sequence_fvg(
     sweep_index: int | None,
     bullish: bool,
 ) -> dict | None:
-    """
-    Backward-compatible helper: returns the newest unfilled
-    or partially mitigated FVG after the supplied sweep.
-    """
-
-    found = find_sequence_fvgs(
-        candles,
-        sweep_index,
-        bullish,
-    )
-
+    """Compatibility helper returning the newest FVG after a sweep."""
+    found = find_sequence_fvgs(candles, sweep_index, bullish)
     return found[0] if found else None
 
 
@@ -503,51 +480,55 @@ def find_valid_sweep_setup(
     bullish: bool,
 ) -> dict:
 
+    stats = {
+        "sweeps_seen": len(sweep_indices),
+        "sweeps_passed_wick_quality": 0,
+        "fvg_zones_found": 0,
+        "fvg_fully_mitigated": 0,
+        "fvg_failed_size": 0,
+        "fvg_failed_displacement": 0,
+        "fvg_invalid_atr": 0,
+        "fvg_passed_quality": 0,
+        "valid_sequences": 0,
+    }
+
     latest_valid_sweep = None
     latest_sweep_quality = None
 
-    # Prefer the most recent valid sweep.
     for sweep_index in reversed(sweep_indices):
-
-        quality = sweep_quality(
-            candles,
-            sweep_index,
-            bullish,
-        )
-
+        quality = sweep_quality(candles, sweep_index, bullish)
         if not quality["valid"]:
             continue
+
+        stats["sweeps_passed_wick_quality"] += 1
 
         if latest_valid_sweep is None:
             latest_valid_sweep = sweep_index
             latest_sweep_quality = quality
 
-        # Test every eligible FVG after this sweep, newest first.
-        fvgs = find_sequence_fvgs(
-            candles,
-            sweep_index,
-            bullish,
-        )
+        fvgs = find_sequence_fvgs(candles, sweep_index, bullish)
+        stats["fvg_zones_found"] += len(fvgs)
 
         for fvg in fvgs:
+            fvg_result = fvg_quality(candles, fvg, atr_values, bullish)
+            relationship = sweep_fvg_relationship(sweep_index, fvg)
 
-            fvg_result = fvg_quality(
-                candles,
-                fvg,
-                atr_values,
-                bullish,
-            )
-
-            relationship = sweep_fvg_relationship(
-                sweep_index,
-                fvg,
-            )
+            if fvg_result["status"] == "FULL":
+                stats["fvg_fully_mitigated"] += 1
+            if "fvg_too_small" in fvg_result["failure_reasons"]:
+                stats["fvg_failed_size"] += 1
+            if "displacement_failed" in fvg_result["failure_reasons"]:
+                stats["fvg_failed_displacement"] += 1
+            if any(reason.startswith("invalid_") for reason in fvg_result["failure_reasons"]):
+                stats["fvg_invalid_atr"] += 1
 
             if (
                 fvg_result["valid"]
                 and relationship["within_max_gap"]
                 and relationship["correct_sequence"]
             ):
+                stats["fvg_passed_quality"] += 1
+                stats["valid_sequences"] += 1
                 return {
                     "sweep_index": sweep_index,
                     "sweep_quality": quality,
@@ -555,6 +536,7 @@ def find_valid_sweep_setup(
                     "fvg_quality": fvg_result,
                     "relationship": relationship,
                     "sequence_valid": True,
+                    "diagnostics": stats,
                 }
 
     return {
@@ -565,17 +547,10 @@ def find_valid_sweep_setup(
             "candle_index": None,
         },
         "fvg": None,
-        "fvg_quality": fvg_quality(
-            candles,
-            None,
-            atr_values,
-            bullish,
-        ),
-        "relationship": sweep_fvg_relationship(
-            latest_valid_sweep,
-            None,
-        ),
+        "fvg_quality": fvg_quality(candles, None, atr_values, bullish),
+        "relationship": sweep_fvg_relationship(latest_valid_sweep, None),
         "sequence_valid": False,
+        "diagnostics": stats,
     }
 
 
@@ -1025,9 +1000,9 @@ def analyze(
         "signal_grade": grade,
 
         "reason": (
-            "Stage 11B-3.2 ICT scalping conditions passed"
+            "Stage 11B-3.3 ICT scalping conditions passed"
             if signal != "NO_TRADE"
-            else "Stage 11B-3.2 ICT confluence conditions incomplete"
+            else "Stage 11B-3.3 ICT confluence conditions incomplete"
         ),
 
         "bias_ema20_50": bias,
