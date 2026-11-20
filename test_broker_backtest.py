@@ -45,6 +45,14 @@ class BrokerBacktestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_broker_backtest(candles)
 
+    def test_real_analysis_integration_smoke_is_simulation_only(self):
+        # Exercise the real analysis engine (not a mocked NO_TRADE response).
+        result = run_broker_backtest(make_candles(900))
+        self.assertEqual(result["execution"], "BACKTEST_ONLY")
+        self.assertFalse(result["real_orders_enabled"])
+        self.assertGreaterEqual(result["diagnostics"]["bars_evaluated"], 0)
+        self.assertEqual(result["trades"], len(result["trade_history"]))
+
 
 if __name__ == "__main__":
     unittest.main()
