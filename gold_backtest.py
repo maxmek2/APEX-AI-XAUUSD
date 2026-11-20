@@ -1,4 +1,4 @@
-"""Stage 3.6 XAUUSD ICT + FRVP backtest diagnostics; no order routing."""
+"""Stage 3.7 XAUUSD ICT + FRVP SELL investigation; no order routing."""
 
 from __future__ import annotations
 
@@ -148,6 +148,24 @@ def run_xauusd_backtest(
     # Detailed Stage 3.4 evidence for every bar with a valid ICT sequence.
     # This is diagnostic output only; it does not change entry decisions.
     sequence_gate_samples = []
+
+    # Stage 3.7: focused SELL-side investigation. Diagnostic only.
+    sell_investigation = {
+        "bars_checked": 0,
+        "bars_with_sweep": 0,
+        "sweeps_seen": 0,
+        "sweeps_passed_wick_quality": 0,
+        "fvg_zones_found": 0,
+        "fvg_fully_mitigated": 0,
+        "fvg_failed_size": 0,
+        "fvg_failed_displacement": 0,
+        "fvg_invalid_atr": 0,
+        "fvg_passed_quality": 0,
+        "valid_sequences": 0,
+        "signal_check_failures": {},
+        "sample_limit": 30,
+        "samples": [],
+    }
 
     slip = slippage_bps / 10000
 
@@ -354,6 +372,68 @@ def run_xauusd_backtest(
             for key in setup_diagnostics[direction_name]:
                 setup_diagnostics[direction_name][key] += int(details.get(key, 0) or 0)
 
+        # Stage 3.7: explain where bearish setup formation is stopping.
+        # The counters are the engine's per-bar diagnostic increments.
+        sell_setup = sequence.get("bearish_setup") or {}
+        sell_setup_details = sell_setup.get("diagnostics") or {}
+        sell_checks = (signal_diag.get("sell") or {}).get("checks") or {}
+        sell_investigation["bars_checked"] += 1
+
+        for key in (
+            "sweeps_seen",
+            "sweeps_passed_wick_quality",
+            "fvg_zones_found",
+            "fvg_fully_mitigated",
+            "fvg_failed_size",
+            "fvg_failed_displacement",
+            "fvg_invalid_atr",
+            "fvg_passed_quality",
+            "valid_sequences",
+        ):
+            value = sell_setup_details.get(key, 0)
+            if isinstance(value, (int, float)) and value > 0:
+                sell_investigation[key] += int(value)
+
+        if (sell_setup_details.get("sweeps_seen") or 0) > 0:
+            sell_investigation["bars_with_sweep"] += 1
+
+        for check_name, passed in sell_checks.items():
+            if passed is False:
+                _increment(sell_investigation["signal_check_failures"], check_name)
+
+        has_sell_evidence = any(
+            (sell_setup_details.get(key) or 0) > 0
+            for key in (
+                "sweeps_seen",
+                "fvg_zones_found",
+                "valid_sequences",
+            )
+        )
+        if has_sell_evidence and len(sell_investigation["samples"]) < sell_investigation["sample_limit"]:
+            sell_fvg = sell_setup.get("fvg") or {}
+            sell_fvg_quality = sell_setup.get("fvg_quality") or {}
+            sell_gate = (signal_diag.get("sell") or {}).get("sequence_gate") or {}
+            sell_investigation["samples"].append({
+                "bar_index": i,
+                "bar_open_time": bar.open_time,
+                "bar_close_time": bar.close_time,
+                "close": bar.close,
+                "status": side,
+                "sell_score": (signal_diag.get("sell") or {}).get("score"),
+                "minimum_score": (signal_diag.get("sell") or {}).get(
+                    "minimum_score",
+                    report.get("minimum_signal_score", 65),
+                ),
+                "sell_checks": sell_checks,
+                "setup_diagnostics": sell_setup_details,
+                "sweep_index": sell_setup.get("sweep_index"),
+                "sweep_quality": sell_setup.get("sweep_quality"),
+                "fvg": sell_fvg,
+                "fvg_quality": sell_fvg_quality,
+                "relationship": sell_setup.get("relationship"),
+                "sequence_gate": sell_gate,
+            })
+
         if side not in ("BUY_CANDIDATE", "SELL_CANDIDATE"):
             continue
 
@@ -534,6 +614,22 @@ def run_xauusd_backtest(
         "strategy_rules_changed": False,
     }
 
+    if sell_investigation["valid_sequences"] > 0:
+        if sell_investigation["signal_check_failures"]:
+            sell_investigation["investigation_status"] = "SEQUENCES_FOUND_CHECK_SIGNAL_GATES"
+        else:
+            sell_investigation["investigation_status"] = "SEQUENCES_FOUND"
+    elif sell_investigation["fvg_zones_found"] == 0:
+        sell_investigation["investigation_status"] = "NO_BEARISH_FVG_ZONES_FOUND"
+    elif sell_investigation["fvg_passed_quality"] == 0:
+        sell_investigation["investigation_status"] = "BEARISH_FVG_QUALITY_FILTER"
+    else:
+        sell_investigation["investigation_status"] = "SWEEP_FVG_SEQUENCE_LINK_OR_OTHER_FILTER"
+
+    sell_investigation["diagnostic_only"] = True
+    sell_investigation["strategy_rules_changed"] = False
+    sell_investigation.pop("sample_limit", None)
+
     ict_checks_result = {}
     for direction_name, stats in ict_checks.items():
         count = stats["bars_checked"]
@@ -569,6 +665,7 @@ def run_xauusd_backtest(
             "sequence_gate_samples": sequence_gate_samples,
             "sequence_deduplication": sequence_deduplication,
             "unique_sequence_gate_samples": unique_sequence_gate_samples,
+            "sell_investigation": sell_investigation,
         },
         "trade_history": trades,
         "execution": "BACKTEST_ONLY",
