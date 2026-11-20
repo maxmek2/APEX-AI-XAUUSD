@@ -1,4 +1,4 @@
-"""Stage 3.7 XAUUSD ICT + FRVP SELL investigation; no order routing."""
+"""Stage 3.8 XAUUSD bearish FVG deep diagnostics; no order routing."""
 
 from __future__ import annotations
 
@@ -377,6 +377,42 @@ def run_xauusd_backtest(
         sell_setup = sequence.get("bearish_setup") or {}
         sell_setup_details = sell_setup.get("diagnostics") or {}
         sell_checks = (signal_diag.get("sell") or {}).get("checks") or {}
+
+        # Stage 3.8: inspect each raw bearish FVG candidate before filters.
+        # These are observations across rolling windows; unique candidates
+        # are deduplicated later using absolute sweep/FVG candle timestamps.
+        candidate_diag = sell_setup_details.get("fvg_candidate_stage_counts") or {}
+        for stage_name in sell_investigation["fvg_candidate_stage_counts"]:
+            value = candidate_diag.get(stage_name, 0)
+            if isinstance(value, (int, float)) and value > 0:
+                sell_investigation["fvg_candidate_stage_counts"][stage_name] += int(value)
+        failure_counts = sell_setup_details.get("fvg_failure_reason_counts") or {}
+        for failure_name, value in failure_counts.items():
+            if isinstance(value, (int, float)) and value > 0:
+                _increment(sell_investigation["fvg_failure_reason_counts"], failure_name)
+                sell_investigation["fvg_failure_reason_counts"][failure_name] += int(value) - 1
+
+        for candidate in sell_setup.get("fvg_candidate_samples") or []:
+            if len(sell_investigation["fvg_candidate_samples"]) >= sell_investigation["fvg_candidate_sample_limit"]:
+                break
+            candidate_sweep_index = candidate.get("sweep_index")
+            candidate_fvg = candidate.get("fvg") or {}
+            candidate_formation_index = candidate_fvg.get("formation_index")
+            candidate_sample = dict(candidate)
+            candidate_sample["sweep_open_time"] = (
+                history[candidate_sweep_index].open_time
+                if isinstance(candidate_sweep_index, int) and 0 <= candidate_sweep_index < len(history)
+                else None
+            )
+            candidate_sample["fvg_formation_open_time"] = (
+                history[candidate_formation_index].open_time
+                if isinstance(candidate_formation_index, int) and 0 <= candidate_formation_index < len(history)
+                else None
+            )
+            candidate_sample["observed_bar_open_time"] = bar.open_time
+            candidate_sample["observed_bar_index"] = i
+            sell_investigation["fvg_candidate_samples"].append(candidate_sample)
+        sell_investigation["fvg_candidate_observations"] += int(candidate_diag.get("candidate_detected", 0) or 0)
         sell_investigation["bars_checked"] += 1
 
         for key in (
@@ -614,6 +650,31 @@ def run_xauusd_backtest(
         "strategy_rules_changed": False,
     }
 
+    # Stage 3.8: deduplicate sampled candidates across overlapping rolling windows.
+    candidate_unique = {}
+    candidate_unresolved = 0
+    for candidate in sell_investigation["fvg_candidate_samples"]:
+        sweep_time = candidate.get("sweep_open_time")
+        fvg_time = candidate.get("fvg_formation_open_time")
+        if sweep_time is None or fvg_time is None:
+            candidate_unresolved += 1
+            key = ("unresolved", candidate.get("observed_bar_open_time"), candidate.get("observed_bar_index"))
+        else:
+            key = (sweep_time, fvg_time)
+        previous = candidate_unique.get(key)
+        if previous is None or candidate.get("observed_bar_index", -1) > previous.get("observed_bar_index", -1):
+            candidate_unique[key] = candidate
+    sell_investigation["unique_fvg_candidate_samples"] = list(candidate_unique.values())
+    sell_investigation["fvg_candidate_sample_deduplication"] = {
+        "sampled_observations": len(sell_investigation["fvg_candidate_samples"]),
+        "unique_sampled_candidates": len(candidate_unique),
+        "duplicates_removed": len(sell_investigation["fvg_candidate_samples"]) - len(candidate_unique),
+        "unresolved_timestamp_samples_kept_separate": candidate_unresolved,
+        "deduplication_key": "sweep_open_time+fvg_formation_open_time",
+        "sample_cap": sell_investigation["fvg_candidate_sample_limit"],
+        "note": "Sample-only deduplication; aggregate stage counters remain rolling-window observations.",
+    }
+
     if sell_investigation["valid_sequences"] > 0:
         if sell_investigation["signal_check_failures"]:
             sell_investigation["investigation_status"] = "SEQUENCES_FOUND_CHECK_SIGNAL_GATES"
@@ -629,6 +690,7 @@ def run_xauusd_backtest(
     sell_investigation["diagnostic_only"] = True
     sell_investigation["strategy_rules_changed"] = False
     sell_investigation.pop("sample_limit", None)
+    sell_investigation.pop("fvg_candidate_sample_limit", None)
 
     ict_checks_result = {}
     for direction_name, stats in ict_checks.items():
