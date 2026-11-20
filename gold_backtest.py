@@ -44,6 +44,23 @@ def _resample(candles: list[Candle], factor: int) -> list[Candle]:
     return out
 
 
+def _new_sequence_gate_stats() -> dict:
+    return {
+        "bars_with_valid_sequence": 0,
+        "mandatory_passed": 0,
+        "mandatory_failed": 0,
+        "score_passed": 0,
+        "score_failed": 0,
+        "signal_passed": 0,
+        "failed_checks_when_sequence_valid": {},
+        "mandatory_failure_reasons": {
+            "trend_ema": 0,
+            "price_position": 0,
+            "structure_and_displacement": 0,
+        },
+    }
+
+
 def run_xauusd_backtest(
     candles: list[Candle],
     starting_balance: float = 100.0,
@@ -95,7 +112,6 @@ def run_xauusd_backtest(
         for direction in ("buy", "sell")
     }
 
-    # Detailed diagnostics emitted by analysis_engine.py Stage 11B-3.3.
     setup_diagnostics = {
         direction: {
             "sweeps_seen": 0,
@@ -109,6 +125,13 @@ def run_xauusd_backtest(
             "valid_sequences": 0,
         }
         for direction in ("buy", "sell")
+    }
+
+    # These counters isolate the final confirmation gates only on bars
+    # where a valid sweep -> FVG sequence was actually found.
+    sequence_gate_diagnostics = {
+        "buy": _new_sequence_gate_stats(),
+        "sell": _new_sequence_gate_stats(),
     }
 
     slip = slippage_bps / 10000
@@ -209,6 +232,58 @@ def run_xauusd_backtest(
                 stats["mandatory_failed"] += 1
 
         sequence = report.get("ict_sequence") or {}
+
+        for direction_name, valid_key in (
+            ("buy", "bullish_valid"),
+            ("sell", "bearish_valid"),
+        ):
+            if not sequence.get(valid_key, False):
+                continue
+
+            stats = sequence_gate_diagnostics[direction_name]
+            stats["bars_with_valid_sequence"] += 1
+
+            detail = signal_diag.get(direction_name) or {}
+            checks = detail.get("checks") or {}
+            score = detail.get("score", 0)
+            minimum_score = detail.get("minimum_score", report.get("minimum_signal_score", 65))
+            mandatory = detail.get("mandatory_conditions_passed") is True
+
+            if mandatory:
+                stats["mandatory_passed"] += 1
+            else:
+                stats["mandatory_failed"] += 1
+
+            if isinstance(score, (int, float)) and score >= minimum_score:
+                stats["score_passed"] += 1
+            else:
+                stats["score_failed"] += 1
+
+            if detail.get("passed") is True:
+                stats["signal_passed"] += 1
+
+            for check_name, passed in checks.items():
+                if not passed:
+                    failed = stats["failed_checks_when_sequence_valid"]
+                    failed[check_name] = failed.get(check_name, 0) + 1
+
+            # Break down the mandatory gate using the actual checks returned
+            # by analyze(); no new trading conditions are introduced here.
+            trend_key = "ema_bullish" if direction_name == "buy" else "ema_bearish"
+            position_key = "price_above_ema20" if direction_name == "buy" else "price_below_ema20"
+            structure_key = "bullish_structure" if direction_name == "buy" else "bearish_structure"
+            displacement_key = "bullish_displacement" if direction_name == "buy" else "bearish_displacement"
+
+            if checks and not checks.get(trend_key, False):
+                stats["mandatory_failure_reasons"]["trend_ema"] += 1
+            if checks and not checks.get(position_key, False):
+                stats["mandatory_failure_reasons"]["price_position"] += 1
+            if checks and not (
+                checks.get(structure_key, False)
+                or checks.get(displacement_key, False)
+            ):
+                stats["mandatory_failure_reasons"]["structure_and_displacement"] += 1
+
         for direction_name, setup_key in (
             ("buy", "bullish_setup"),
             ("sell", "bearish_setup"),
@@ -340,6 +415,7 @@ def run_xauusd_backtest(
             "candidate_counts": candidate_counts,
             "ict_checks": ict_checks_result,
             "setup_diagnostics": setup_diagnostics,
+            "sequence_gate_diagnostics": sequence_gate_diagnostics,
         },
         "trade_history": trades,
         "execution": "BACKTEST_ONLY",
