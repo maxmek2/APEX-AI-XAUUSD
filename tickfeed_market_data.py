@@ -40,7 +40,7 @@ def _headers() -> dict[str, str]:
         )
 
     return {
-        "X-API-Key": key
+        "X-API-Key": mdp_XDcYsHkqg_9jqodgQCKSlZafMbA8oTJW5wn-S_sy5mY
     }
 
 
