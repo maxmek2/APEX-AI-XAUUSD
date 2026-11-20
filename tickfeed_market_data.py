@@ -26,15 +26,12 @@ TIMEFRAMES = {
     "1d": ("D1", 86_400_000),
 }
 
-
 class TickFeedError(RuntimeError):
     """Raised when TickFeed data is unavailable or invalid."""
 
-
 def _headers() -> dict[str, str]:
     key = os.getenv("TICKFEED_API_KEY", "").strip()
-    return {"X-API-Key":} if key else {}
-
+    return {"X-API-Key": key} if key else {}
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: float = 15.0) -> dict:
     try:
@@ -52,14 +49,12 @@ def _get(path: str, params: dict[str, Any] | None = None, timeout: float = 15.0)
     except ValueError as exc:
         raise TickFeedError("TickFeed returned invalid JSON") from exc
 
-
 def _assert_xauusd(payload: dict) -> None:
     # The endpoint path is fixed to XAUUSD. If the provider includes a symbol,
     # verify it rather than silently accepting another instrument.
     symbol = payload.get("symbol")
     if symbol is not None and str(symbol).upper() != SYMBOL:
         raise TickFeedError(f"Unexpected instrument in TickFeed response: {symbol}")
-
 
 def fetch_xauusd_price() -> dict:
     """Return the XAUUSD bid/ask quote and its freshness metadata."""
@@ -78,11 +73,9 @@ def fetch_xauusd_price() -> dict:
     return {**data, "symbol": SYMBOL, "bid": bid, "ask": ask,
             "mid": (bid + ask) / 2, "spread": ask - bid}
 
-
 def fetch_feed_health() -> dict:
     """Return provider health; this endpoint is public and requires no API key."""
     return _get("/health")
-
 
 def fetch_xauusd_gaps(interval: str = "5m", start_time: str | None = None,
                        end_time: str | None = None) -> dict:
@@ -98,7 +91,6 @@ def fetch_xauusd_gaps(interval: str = "5m", start_time: str | None = None,
     payload = _get(f"/v1/candles/{SYMBOL}/gaps", params)
     _assert_xauusd(payload)
     return payload
-
 
 def fetch_xauusd_klines(interval: str = "5m", limit: int = 500,
                          source: str = "live") -> list[Candle]:
