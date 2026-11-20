@@ -15,12 +15,10 @@ from indicators import (
 
 
 # ==========================================
-# APEX AI STAGE 3.4
-# Diagnostic improvement only.
-# Entry, scoring, risk and execution rules unchanged.
+# APEX AI STAGE 11B-3.2
 # ==========================================
 
-STRATEGY_VERSION = "STAGE_3_4_ICT_DIAGNOSTICS"
+STRATEGY_VERSION = "STAGE_3_8_BEARISH_FVG_DEEP_DIAGNOSTICS"
 
 ATR_MULTIPLIER = 1.5
 RISK_REWARD = 2.0
@@ -492,8 +490,17 @@ def find_valid_sweep_setup(
         "fvg_invalid_atr": 0,
         "fvg_passed_quality": 0,
         "valid_sequences": 0,
+        "fvg_candidate_stage_counts": {
+            "candidate_detected": 0,
+            "size_passed": 0,
+            "displacement_passed": 0,
+            "mitigation_passed": 0,
+            "quality_passed": 0,
+        },
+        "fvg_failure_reason_counts": {},
     }
 
+    candidate_samples = []
     latest_valid_sweep = None
     latest_sweep_quality = None
 
@@ -514,6 +521,27 @@ def find_valid_sweep_setup(
         for fvg in fvgs:
             fvg_result = fvg_quality(candles, fvg, atr_values, bullish)
             relationship = sweep_fvg_relationship(sweep_index, fvg)
+            stages = stats["fvg_candidate_stage_counts"]
+            stages["candidate_detected"] += 1
+            if fvg_result.get("size_passed"):
+                stages["size_passed"] += 1
+            if fvg_result.get("displacement_passed"):
+                stages["displacement_passed"] += 1
+            if fvg_result.get("mitigation_passed"):
+                stages["mitigation_passed"] += 1
+            if fvg_result.get("valid"):
+                stages["quality_passed"] += 1
+            for failure_reason in fvg_result.get("failure_reasons", []):
+                _increment = stats["fvg_failure_reason_counts"]
+                _increment[failure_reason] = _increment.get(failure_reason, 0) + 1
+            if len(candidate_samples) < 100:
+                candidate_samples.append({
+                    "sweep_index": sweep_index,
+                    "sweep_quality": quality,
+                    "fvg": dict(fvg),
+                    "fvg_quality": fvg_result,
+                    "relationship": relationship,
+                })
 
             if fvg_result["status"] == "FULL":
                 stats["fvg_fully_mitigated"] += 1
@@ -539,6 +567,7 @@ def find_valid_sweep_setup(
                     "relationship": relationship,
                     "sequence_valid": True,
                     "diagnostics": stats,
+                    "fvg_candidate_samples": candidate_samples,
                 }
 
     return {
@@ -553,6 +582,7 @@ def find_valid_sweep_setup(
         "relationship": sweep_fvg_relationship(latest_valid_sweep, None),
         "sequence_valid": False,
         "diagnostics": stats,
+        "fvg_candidate_samples": candidate_samples,
     }
 
 
@@ -969,88 +999,7 @@ def analyze(
             grade = "NO_TRADE"
             stop_loss = None
 
-    # ==========================================
-    # STAGE 3.4 DIAGNOSTICS
-    # Diagnostic detail only; no entry rules changed.
-    # ==========================================
-
-    def build_gate_diagnostics(
-        direction: str,
-        checks: dict,
-        sequence_valid: bool,
-        mandatory_passed: bool,
-        signal_passed: bool,
-        signal_score: int,
-        displacement_result: dict,
-    ) -> dict:
-
-        structure_key = (
-            "bullish_structure"
-            if direction == "bullish"
-            else "bearish_structure"
-        )
-
-        position_key = (
-            "price_above_ema20"
-            if direction == "bullish"
-            else "price_below_ema20"
-        )
-
-        trend_key = "ema_" + direction
-
-        structure_or_displacement_passed = (
-            checks[structure_key]
-            or displacement_result["valid"]
-        )
-
-        return {
-            "sequence_valid": sequence_valid,
-            "mandatory_passed": mandatory_passed,
-            "mandatory_failed": not mandatory_passed,
-            "score": signal_score,
-            "minimum_score": MIN_SIGNAL_SCORE,
-            "score_passed": signal_score >= MIN_SIGNAL_SCORE,
-            "signal_passed": signal_passed,
-
-            "failed_checks": [
-                key
-                for key, value in checks.items()
-                if not value
-            ],
-
-            "mandatory_failure_reasons": {
-                "trend_ema": not checks[trend_key],
-                "price_position": not checks[position_key],
-                "structure_and_displacement": (
-                    not structure_or_displacement_passed
-                ),
-            },
-
-            "market_context": {
-                "ema20": e20_now,
-                "ema50": e50_now,
-                "ema_bias": bias,
-                "last_close": last.close,
-                "rsi14": rsi_now,
-                "atr14": atr_now,
-                "structure_bias": structure["structure_bias"],
-                "previous_structure_bias": structure[
-                    "previous_structure_bias"
-                ],
-                "latest_swing_high": structure[
-                    "latest_swing_high"
-                ],
-                "latest_swing_low": structure[
-                    "latest_swing_low"
-                ],
-                "break_level": structure["break_level"],
-                "price_above_ema20": above,
-                "price_below_ema20": below,
-            },
-
-            "displacement_detail": displacement_result,
-        }
-
+    # Diagnostics.
     diagnostics = {
         "buy": {
             "score": buy_score,
@@ -1060,20 +1009,9 @@ def analyze(
             "mandatory_conditions_passed": buy_mandatory,
             "checks": buy_checks,
             "failed_checks": [
-                key for key, value in buy_checks.items()
-                if not value
+                key for key, value in buy_checks.items() if not value
             ],
-            "sequence_gate": build_gate_diagnostics(
-                "bullish",
-                buy_checks,
-                bull_sequence,
-                buy_mandatory,
-                buy,
-                buy_score,
-                bull_disp,
-            ),
         },
-
         "sell": {
             "score": sell_score,
             "total": 100,
@@ -1082,18 +1020,8 @@ def analyze(
             "mandatory_conditions_passed": sell_mandatory,
             "checks": sell_checks,
             "failed_checks": [
-                key for key, value in sell_checks.items()
-                if not value
+                key for key, value in sell_checks.items() if not value
             ],
-            "sequence_gate": build_gate_diagnostics(
-                "bearish",
-                sell_checks,
-                bear_sequence,
-                sell_mandatory,
-                sell,
-                sell_score,
-                bear_disp,
-            ),
         },
     }
 
@@ -1104,9 +1032,9 @@ def analyze(
         "signal_grade": grade,
 
         "reason": (
-            "Stage 3.4 ICT scalping conditions passed"
+            "Stage 11B-3.3 ICT scalping conditions passed"
             if signal != "NO_TRADE"
-            else "Stage 3.4 ICT confluence conditions incomplete"
+            else "Stage 11B-3.3 ICT confluence conditions incomplete"
         ),
 
         "bias_ema20_50": bias,
