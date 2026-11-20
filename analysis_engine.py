@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import math
@@ -16,10 +15,10 @@ from indicators import (
 
 
 # ==========================================
-# APEX AI STAGE 11B-3.1
+# APEX AI STAGE 11B-3.2
 # ==========================================
 
-STRATEGY_VERSION = "STAGE_11B_3_1_ICT_SCALPING"
+STRATEGY_VERSION = "STAGE_11B_3_2_ICT_SCALPING"
 
 ATR_MULTIPLIER = 1.5
 RISK_REWARD = 2.0
@@ -193,8 +192,7 @@ def fvg_quality(
     # Three-candle FVG:
     # Candle 1 = first candle
     # Candle 2 = displacement candle
-    # Candle 3 = FVG confirmation candle
-
+    # Candle 3 = FVG confirmation candle.
     displacement_idx = idx - 1
 
     if (
@@ -350,21 +348,28 @@ def market_structure(
 # 6. SEQUENCE FVG
 # ==========================================
 
-def find_sequence_fvg(
+def find_sequence_fvgs(
     candles: list[Candle],
     sweep_index: int | None,
     bullish: bool,
-) -> dict | None:
+) -> list[dict]:
+    """
+    Return all valid, not-fully-mitigated FVG zones formed
+    after the sweep and within MAX_SWEEP_FVG_GAP bars.
+
+    Results are ordered newest first so the strategy prefers
+    the most recent qualifying setup, but can fall back to an
+    earlier FVG if the newer one fails its quality test.
+    """
 
     if (
         not isinstance(sweep_index, int)
         or isinstance(sweep_index, bool)
         or not 0 <= sweep_index < len(candles)
     ):
-        return None
+        return []
 
     start = max(2, sweep_index + 1)
-
     end = min(
         len(candles) - 1,
         sweep_index + MAX_SWEEP_FVG_GAP,
@@ -372,55 +377,48 @@ def find_sequence_fvg(
 
     found = []
 
-    for i in range(start, end + 1):
+    for i in range(end, start - 1, -1):
 
         first = candles[i - 2]
         third = candles[i]
 
         if bullish:
-
             if third.low <= first.high:
                 continue
 
             zone_low = first.high
             zone_high = third.low
 
-            later = [
-                c.low for c in candles[i + 1:]
+            later_lows = [
+                candle.low for candle in candles[i + 1:]
             ]
 
-            if any(v <= zone_low for v in later):
+            if any(value <= zone_low for value in later_lows):
                 status = "FULL"
-
-            elif any(v < zone_high for v in later):
+            elif any(value < zone_high for value in later_lows):
                 status = "PARTIAL"
-
             else:
                 status = "UNTOUCHED"
 
         else:
-
             if third.high >= first.low:
                 continue
 
             zone_low = third.high
             zone_high = first.low
 
-            later = [
-                c.high for c in candles[i + 1:]
+            later_highs = [
+                candle.high for candle in candles[i + 1:]
             ]
 
-            if any(v >= zone_high for v in later):
+            if any(value >= zone_high for value in later_highs):
                 status = "FULL"
-
-            elif any(v > zone_low for v in later):
+            elif any(value > zone_low for value in later_highs):
                 status = "PARTIAL"
-
             else:
                 status = "UNTOUCHED"
 
         if status in ("UNTOUCHED", "PARTIAL"):
-
             found.append({
                 "zone_low": zone_low,
                 "zone_high": zone_high,
@@ -428,7 +426,26 @@ def find_sequence_fvg(
                 "status": status,
             })
 
-    return found[-1] if found else None
+    return found
+
+
+def find_sequence_fvg(
+    candles: list[Candle],
+    sweep_index: int | None,
+    bullish: bool,
+) -> dict | None:
+    """
+    Backward-compatible helper: returns the newest unfilled
+    or partially mitigated FVG after the supplied sweep.
+    """
+
+    found = find_sequence_fvgs(
+        candles,
+        sweep_index,
+        bullish,
+    )
+
+    return found[0] if found else None
 
 
 # ==========================================
@@ -489,6 +506,7 @@ def find_valid_sweep_setup(
     latest_valid_sweep = None
     latest_sweep_quality = None
 
+    # Prefer the most recent valid sweep.
     for sweep_index in reversed(sweep_indices):
 
         quality = sweep_quality(
@@ -504,41 +522,40 @@ def find_valid_sweep_setup(
             latest_valid_sweep = sweep_index
             latest_sweep_quality = quality
 
-        fvg = find_sequence_fvg(
+        # Test every eligible FVG after this sweep, newest first.
+        fvgs = find_sequence_fvgs(
             candles,
             sweep_index,
             bullish,
         )
 
-        if not fvg:
-            continue
+        for fvg in fvgs:
 
-        fvg_result = fvg_quality(
-            candles,
-            fvg,
-            atr_values,
-            bullish,
-        )
+            fvg_result = fvg_quality(
+                candles,
+                fvg,
+                atr_values,
+                bullish,
+            )
 
-        relationship = sweep_fvg_relationship(
-            sweep_index,
-            fvg,
-        )
+            relationship = sweep_fvg_relationship(
+                sweep_index,
+                fvg,
+            )
 
-        if (
-            fvg_result["valid"]
-            and relationship["within_max_gap"]
-            and relationship["correct_sequence"]
-        ):
-
-            return {
-                "sweep_index": sweep_index,
-                "sweep_quality": quality,
-                "fvg": fvg,
-                "fvg_quality": fvg_result,
-                "relationship": relationship,
-                "sequence_valid": True,
-            }
+            if (
+                fvg_result["valid"]
+                and relationship["within_max_gap"]
+                and relationship["correct_sequence"]
+            ):
+                return {
+                    "sweep_index": sweep_index,
+                    "sweep_quality": quality,
+                    "fvg": fvg,
+                    "fvg_quality": fvg_result,
+                    "relationship": relationship,
+                    "sequence_valid": True,
+                }
 
     return {
         "sweep_index": latest_valid_sweep,
@@ -638,8 +655,8 @@ def analyze(
         )
 
     if any(
-        not valid_number(v)
-        for v in (
+        not valid_number(value)
+        for value in (
             e20_now,
             e50_now,
             rsi_now,
@@ -669,7 +686,7 @@ def analyze(
         else "neutral"
     )
 
-    # Liquidity sweeps
+    # Liquidity sweeps.
     sweeps = liquidity_sweeps(
         candles,
         lookback=ICT_LOOKBACK,
@@ -738,7 +755,7 @@ def analyze(
         and bear_setup["sequence_valid"]
     )
 
-    # Market structure
+    # Market structure.
     highs, lows = swing_levels(
         candles,
         left=SWING_LEFT,
@@ -761,14 +778,14 @@ def analyze(
         or structure["bearish_choch"]
     )
 
-    # Volume profile
+    # Volume profile.
     vp = (
         volume_profile(candles[-100:])
         if include_volume_profile
         else None
     )
 
-    # Momentum and price position
+    # Momentum and price position.
     bull_rsi = 50 <= rsi_now <= 70
     bear_rsi = 30 <= rsi_now <= 50
 
@@ -787,7 +804,7 @@ def analyze(
         False,
     )
 
-    # Confirmation checks
+    # Confirmation checks.
     buy_checks = {
         "ema_bullish": bias == "bullish",
         "liquidity_sweep": bull_sweep,
@@ -812,7 +829,7 @@ def analyze(
         "bearish_rejection": bear_sweep_q["valid"],
     }
 
-    # Signal scoring
+    # Signal scoring.
     def score(checks: dict, direction: str) -> int:
 
         total = 0
@@ -920,7 +937,7 @@ def analyze(
             else sell_checks
         )
 
-    # Stop loss and take profit
+    # Stop loss and take profit.
     entry = last.close
     stop_loss = None
     take_profit = None
@@ -975,7 +992,7 @@ def analyze(
             grade = "NO_TRADE"
             stop_loss = None
 
-    # Diagnostics
+    # Diagnostics.
     diagnostics = {
         "buy": {
             "score": buy_score,
@@ -985,7 +1002,7 @@ def analyze(
             "mandatory_conditions_passed": buy_mandatory,
             "checks": buy_checks,
             "failed_checks": [
-                k for k, v in buy_checks.items() if not v
+                key for key, value in buy_checks.items() if not value
             ],
         },
         "sell": {
@@ -996,7 +1013,7 @@ def analyze(
             "mandatory_conditions_passed": sell_mandatory,
             "checks": sell_checks,
             "failed_checks": [
-                k for k, v in sell_checks.items() if not v
+                key for key, value in sell_checks.items() if not value
             ],
         },
     }
@@ -1008,9 +1025,9 @@ def analyze(
         "signal_grade": grade,
 
         "reason": (
-            "Stage 11B-3.1 ICT scalping conditions passed"
+            "Stage 11B-3.2 ICT scalping conditions passed"
             if signal != "NO_TRADE"
-            else "Stage 11B-3.1 ICT confluence conditions incomplete"
+            else "Stage 11B-3.2 ICT confluence conditions incomplete"
         ),
 
         "bias_ema20_50": bias,
