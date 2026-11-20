@@ -1,4 +1,4 @@
-"""Conservative XAUUSD ICT + FRVP historical simulation; no order routing."""
+"""Stage 3.6 XAUUSD ICT + FRVP backtest diagnostics; no order routing."""
 
 from __future__ import annotations
 
@@ -309,15 +309,31 @@ def run_xauusd_backtest(
             # Include them verbatim when present, with useful candle/setup context.
             gate_detail = detail.get("sequence_gate") or {}
             setup = sequence.get(setup_key) or {}
+            fvg_detail = setup.get("fvg") or {}
+            sweep_index = setup.get("sweep_index")
+            formation_index = fvg_detail.get("formation_index")
+
+            # Convert rolling-history indices to stable absolute candle times.
+            # This lets Stage 3.6 identify the same setup across adjacent bars.
+            sweep_open_time = None
+            if isinstance(sweep_index, int) and 0 <= sweep_index < len(history):
+                sweep_open_time = history[sweep_index].open_time
+
+            fvg_formation_open_time = None
+            if isinstance(formation_index, int) and 0 <= formation_index < len(history):
+                fvg_formation_open_time = history[formation_index].open_time
+
             sample = {
                 "bar_index": i,
                 "bar_open_time": bar.open_time,
                 "bar_close_time": bar.close_time,
                 "direction": direction_name,
                 "sequence_valid": True,
-                "sweep_index": setup.get("sweep_index"),
+                "sweep_index": sweep_index,
+                "sweep_open_time": sweep_open_time,
                 "sweep_quality": setup.get("sweep_quality"),
-                "fvg": setup.get("fvg"),
+                "fvg": fvg_detail,
+                "fvg_formation_open_time": fvg_formation_open_time,
                 "fvg_quality": setup.get("fvg_quality"),
                 "relationship": setup.get("relationship"),
                 "signal_score": detail.get("score"),
@@ -429,6 +445,95 @@ def run_xauusd_backtest(
     gross_profit = sum(trade["net_pnl"] for trade in trades if trade["net_pnl"] > 0)
     gross_loss = abs(sum(trade["net_pnl"] for trade in trades if trade["net_pnl"] < 0))
 
+    # Stage 3.6: collapse repeated observations of the same sweep + FVG.
+    # The key uses absolute candle timestamps, never rolling-window indices.
+    unique_by_key = {}
+    for sample in sequence_gate_samples:
+        sweep_time = sample.get("sweep_open_time")
+        fvg_time = sample.get("fvg_formation_open_time")
+        direction_name = sample.get("direction")
+
+        if sweep_time is None or fvg_time is None:
+            # Preserve unresolvable records, but do not merge them incorrectly.
+            key = (
+                "unresolved",
+                direction_name,
+                sample.get("bar_open_time"),
+                sample.get("bar_index"),
+            )
+        else:
+            key = (direction_name, sweep_time, fvg_time)
+
+        existing = unique_by_key.get(key)
+        if existing is None:
+            unique_by_key[key] = sample
+        else:
+            # Keep the most informative observation: signal passed first,
+            # then higher score, then the later observation as a tie-breaker.
+            def _sample_rank(item):
+                score_value = item.get("signal_score")
+                score_value = score_value if isinstance(score_value, (int, float)) else -1
+                return (
+                    item.get("signal_passed") is True,
+                    score_value,
+                    item.get("bar_index", -1),
+                )
+            if _sample_rank(sample) > _sample_rank(existing):
+                unique_by_key[key] = sample
+
+    unique_sequence_gate_samples = []
+    regime_counts = {
+        "buy": {"WITH_TREND": 0, "COUNTERTREND": 0, "MIXED_OR_NEUTRAL": 0},
+        "sell": {"WITH_TREND": 0, "COUNTERTREND": 0, "MIXED_OR_NEUTRAL": 0},
+    }
+
+    for sample in unique_by_key.values():
+        gate = sample.get("sequence_gate") or {}
+        market = gate.get("market_context") or {}
+        ema_bias = market.get("ema_bias", market.get("bias"))
+        structure_bias = market.get("structure_bias")
+        direction_name = sample.get("direction")
+        expected_bias = "bullish" if direction_name == "buy" else "bearish"
+
+        if ema_bias == expected_bias and structure_bias == expected_bias:
+            regime = "WITH_TREND"
+        elif ema_bias in ("bullish", "bearish") and structure_bias in ("bullish", "bearish"):
+            regime = "COUNTERTREND"
+        else:
+            regime = "MIXED_OR_NEUTRAL"
+
+        sample_with_regime = dict(sample)
+        sample_with_regime["market_regime_classification"] = {
+            "label": regime,
+            "expected_directional_bias": expected_bias,
+            "ema_bias": ema_bias,
+            "structure_bias": structure_bias,
+            "diagnostic_only": True,
+        }
+        unique_sequence_gate_samples.append(sample_with_regime)
+
+        if direction_name in regime_counts:
+            regime_counts[direction_name][regime] += 1
+
+    unique_counts_by_direction = {
+        "buy": sum(1 for item in unique_sequence_gate_samples if item.get("direction") == "buy"),
+        "sell": sum(1 for item in unique_sequence_gate_samples if item.get("direction") == "sell"),
+    }
+    sequence_deduplication = {
+        "raw_sample_count": len(sequence_gate_samples),
+        "unique_setup_count": len(unique_sequence_gate_samples),
+        "duplicates_removed": len(sequence_gate_samples) - len(unique_sequence_gate_samples),
+        "unique_setups_by_direction": unique_counts_by_direction,
+        "regime_classification_counts": regime_counts,
+        "deduplication_key": "direction+sweep_open_time+fvg_formation_open_time",
+        "unresolved_timestamp_samples_kept_separate": sum(
+            1 for item in sequence_gate_samples
+            if item.get("sweep_open_time") is None
+            or item.get("fvg_formation_open_time") is None
+        ),
+        "strategy_rules_changed": False,
+    }
+
     ict_checks_result = {}
     for direction_name, stats in ict_checks.items():
         count = stats["bars_checked"]
@@ -462,6 +567,8 @@ def run_xauusd_backtest(
             "setup_diagnostics": setup_diagnostics,
             "sequence_gate_diagnostics": sequence_gate_diagnostics,
             "sequence_gate_samples": sequence_gate_samples,
+            "sequence_deduplication": sequence_deduplication,
+            "unique_sequence_gate_samples": unique_sequence_gate_samples,
         },
         "trade_history": trades,
         "execution": "BACKTEST_ONLY",
