@@ -11,6 +11,7 @@ from frvp import calculate_frvp
 from tickfeed_market_data import fetch_xauusd_klines, fetch_xauusd_price, fetch_feed_health
 from gold_strategy import analyze_xauusd
 from gold_backtest import run_xauusd_backtest
+from broker_backtest import run_broker_backtest
 from paper_engine import PaperEngine
 
 app = FastAPI(
@@ -118,6 +119,32 @@ def xauusd_backtest(limit: int=1200, starting_balance: float=100.0, risk_percent
         return run_xauusd_backtest(candles, starting_balance, risk_percent, fee_rate, slippage_bps, max_holding_bars)
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc: raise HTTPException(status_code=502, detail=f"TickFeed XAUUSD backtest unavailable: {exc}")
+
+@app.get("/api/xauusd/backtest/broker")
+def xauusd_broker_backtest(
+    limit: int = 5000,
+    starting_balance: float = 100.0,
+    risk_percent: float = 0.10,
+    spread_usd: float = 0.26,
+    slippage_usd_per_side: float = 0.02,
+    commission_rate_per_side: float = 0.0,
+    max_holding_bars: int = 24,
+):
+    """Broker-aware research backtest; never submits live or paper orders."""
+    if not 800 <= limit <= 5000:
+        raise HTTPException(status_code=400, detail="limit must be between 800 and 5000")
+    try:
+        candles = fetch_xauusd_klines("5m", limit, source="stored")
+        return run_broker_backtest(
+            candles, starting_balance, risk_percent, spread_usd,
+            slippage_usd_per_side, commission_rate_per_side,
+            max_holding_bars,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Broker-aware XAUUSD backtest unavailable: {exc}")
+
 
 @app.get("/api/paper/account")
 def paper_account(): return paper.account()
