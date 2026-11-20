@@ -1,5 +1,4 @@
-
-name: Python Syntax Check
+name: Python Tests
 
 on:
   push:
@@ -7,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  compile:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,6 +18,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check Python syntax
+      - name: Install dependencies
         run: |
-          python -m py_compile analysis_engine.py indicators.py gold_backtest.py
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Compile Python modules
+        run: |
+          python -m compileall -q .
+
+      - name: Run test suite
+        run: |
+          pytest -q
