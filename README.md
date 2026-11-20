@@ -40,3 +40,29 @@ Create a Docker Web Service from the repository root. Leave Root Directory blank
 - Simulation: historical backtest and $100 paper account.
 - MT5 execution bridge is not implemented.
 - Real trading and real order routing are disabled.
+
+## Broker-aware backtest
+
+The original diagnostic backtest remains available at `/api/xauusd/backtest`.
+A separate broker-aware engine is available at:
+
+```text
+GET /api/xauusd/backtest/broker
+```
+
+Defaults are a $100 starting balance, 10% **research-only** risk budget per trade,
+$0.26 assumed spread, $0.02 assumed slippage per side, 0% commission until the
+account's actual commission schedule is verified, and a 24-bar maximum hold.
+The engine models the JustMarkets Standard contract as 100 XAU per lot, 0.01
+minimum lot and 0.01 lot step. It rejects trades when the minimum lot would
+exceed the risk budget. These are backtest assumptions, not a live quote or
+guarantee of broker execution.
+
+The broker-aware engine precomputes complete M15/H1 bars and only uses higher
+timeframe bars that have closed by the M5 signal candle. Signals are evaluated
+at M5 close and entries use the next M5 open. If SL and TP are both touched in
+one candle, SL is assumed first. Gaps are not filled or fabricated. FRVP remains
+an approximation based on candle tick-volume proxy.
+
+This endpoint is backtest-only. It does not place demo or live orders; real
+order routing remains disabled.
