@@ -66,3 +66,38 @@ an approximation based on candle tick-volume proxy.
 
 This endpoint is backtest-only. It does not place demo or live orders; real
 order routing remains disabled.
+
+
+## Research indicators (non-production)
+
+The following causal indicator calculations are available in `research_indicators.py`:
+- Choppiness Index (CHOP)
+- Kaufman Adaptive Moving Average (KAMA)
+- Kaufman Efficiency Ratio (ER)
+- Rolling realized volatility (sample standard deviation of log returns)
+- UTC-day anchored tick-volume VWAP and rolling deviation Z-score
+
+These functions are research diagnostics only. They are not enabled as production
+entry rules and do not change the existing ICT + FRVP strategy. All outputs are
+aligned to the input candles; warm-up values are `None`; calculations use only
+current and earlier completed candles. The VWAP uses provider tick-volume proxy,
+not centralized exchange volume.
+
+### Research result on supplied XAUUSD M5 history
+
+On the supplied 35,954-candle CSV (2026-03-26 through 2026-09-25), a predeclared
+standalone-rule diagnostic used a chronological 60%/40% split, $100 starting
+balance per segment, 10% research risk, 0.01 minimum lot, assumed $0.26 spread,
+$0.02 slippage per side, ATR(14) x 1.5 stop, 1.5R target and 24-bar time exit.
+The five holdout results were all negative:
+- CHOP + Donchian breakout: -$54.17
+- KAMA cross: -$62.59
+- ER + Donchian breakout: -$57.89
+- Realized-volatility expansion + Donchian breakout: -$57.34
+- VWAP Z-score mean reversion: -$62.48
+
+These are specific exploratory rules, not proof that the indicators have no
+value as filters. They do not establish a profitable strategy. The supplied
+CSV contains OHLC and tick-volume only; it cannot support true bid/ask footprint,
+exchange CVD, or order-book imbalance. Do not optimize on the holdout segment.
+Real orders remain disabled.
