@@ -25,6 +25,21 @@ def _is_data_gap(previous, current) -> bool:
     return current.open_time - previous.open_time != M5_INTERVAL_MS
 
 
+def _mark_to_market_equity(balance, position, mark_price, spread_half,
+                            slippage_usd_per_side, commission_rate_per_side):
+    """Estimate liquidation equity at a mark, including exit-side costs.
+
+    Entry commission is already deducted from balance when a position opens.
+    """
+    if position is None:
+        return float(balance)
+    direction = 1 if position["side"] == "BUY" else -1
+    exit_fill = mark_price - direction * (spread_half + slippage_usd_per_side)
+    gross = (exit_fill - position["entry_fill"]) * position["quantity_xau"] * direction
+    exit_commission = exit_fill * position["quantity_xau"] * commission_rate_per_side
+    return float(balance) + gross - exit_commission
+
+
 def _validate(candles, starting_balance, risk_percent, spread_usd,
               slippage_usd_per_side, commission_rate_per_side,
               max_holding_bars):
@@ -132,6 +147,7 @@ def run_broker_backtest(
     daily_loss_limit_fraction = 0.03
     current_utc_day = _utc_day(candles[720].open_time)
     utc_day_start_balance = balance
+    last_marked_equity = balance
 
     for i in range(720, len(candles) - 1):
         bar = candles[i]
@@ -139,20 +155,26 @@ def run_broker_backtest(
 
         # A missing M5 bar invalidates intrabar stop/target assumptions.
         # Flatten at the last known close, then skip the first bar after the gap.
+        if bar_day != current_utc_day:
+            current_utc_day = bar_day
+            # Use the last completed candle's marked equity as the new UTC baseline.
+            utc_day_start_balance = last_marked_equity
+
         if i > 0 and _is_data_gap(candles[i - 1], bar):
             if position:
                 close_position(candles[i - 1].close, "DATA_GAP", candles[i - 1], i - 1)
                 counts["exited_before_data_gap"] += 1
-            if bar_day != current_utc_day:
-                current_utc_day = bar_day
-                utc_day_start_balance = balance
+            last_marked_equity = balance
             continue
 
-        if bar_day != current_utc_day:
-            current_utc_day = bar_day
-            utc_day_start_balance = balance
-
         if position:
+            marked_equity = _mark_to_market_equity(
+                balance, position, bar.close, spread_half,
+                slippage_usd_per_side, commission_rate_per_side,
+            )
+            equity_peak = max(equity_peak, marked_equity)
+            if equity_peak > 0:
+                max_drawdown = max(max_drawdown, (equity_peak - marked_equity) / equity_peak)
             age = i - position["entry_index"]
             if position["side"] == "BUY":
                 hit_sl = bar.low <= position["sl"]
@@ -175,6 +197,7 @@ def run_broker_backtest(
                     close_position(position["tp"], "TP", bar, i)
                 elif age >= max_holding_bars:
                     close_position(bar.close, "TIME", bar, i)
+            last_marked_equity = balance if position is None else marked_equity
             continue
 
         history = candles[max(0, i - 299):i + 1]
@@ -269,6 +292,9 @@ def run_broker_backtest(
             "entry_commission": entry_commission,
         }
         counts["accepted_entries"] += 1
+        # At entry, balance already reflects entry commission; next candle marks
+        # the open position using its completed close.
+        last_marked_equity = balance
 
     if position:
         last = candles[-1]
