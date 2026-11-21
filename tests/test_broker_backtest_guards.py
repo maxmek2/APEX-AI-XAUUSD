@@ -1,7 +1,10 @@
 """Regression tests for conservative broker backtest guards."""
 import unittest
 
-from broker_backtest import _is_data_gap, _mark_to_market_equity, _utc_day, _validate
+from broker_backtest import (
+    _is_data_gap, _mark_to_market_equity, _utc_day, _validate,
+    _worst_intrabar_equity,
+)
 from market_models import Candle
 
 
@@ -22,6 +25,15 @@ class BrokerBacktestGuardTests(unittest.TestCase):
             commission_rate_per_side=0.0,
         )
         self.assertAlmostEqual(equity, 96.85)
+
+    def test_worst_intrabar_equity_uses_adverse_candle_extreme(self):
+        buy = {"side": "BUY", "entry_fill": 2001.0, "quantity_xau": 1.0}
+        bar = self.candle(300000)
+        # The candle low is 1999; with 0.15 exit-side costs equity is 96.85.
+        self.assertAlmostEqual(
+            _worst_intrabar_equity(99.0, buy, bar, 0.13, 0.02, 0.0),
+            96.85,
+        )
 
     def test_flat_mark_to_market_equity_equals_balance(self):
         self.assertEqual(
