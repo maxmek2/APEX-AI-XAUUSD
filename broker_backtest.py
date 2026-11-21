@@ -40,6 +40,21 @@ def _mark_to_market_equity(balance, position, mark_price, spread_half,
     return float(balance) + gross - exit_commission
 
 
+def _worst_intrabar_equity(balance, position, bar, spread_half,
+                             slippage_usd_per_side, commission_rate_per_side):
+    """Estimate liquidation equity at the adverse extreme of the candle.
+
+    This is a conservative drawdown diagnostic; it does not change fills or
+    stop/target execution. BUY positions are marked at the candle low and
+    SELL positions at the candle high.
+    """
+    adverse_price = bar.low if position["side"] == "BUY" else bar.high
+    return _mark_to_market_equity(
+        balance, position, adverse_price, spread_half,
+        slippage_usd_per_side, commission_rate_per_side,
+    )
+
+
 def _validate(candles, starting_balance, risk_percent, spread_usd,
               slippage_usd_per_side, commission_rate_per_side,
               max_holding_bars):
@@ -173,8 +188,16 @@ def run_broker_backtest(
                 slippage_usd_per_side, commission_rate_per_side,
             )
             equity_peak = max(equity_peak, marked_equity)
+            adverse_equity = _worst_intrabar_equity(
+                balance, position, bar, spread_half,
+                slippage_usd_per_side, commission_rate_per_side,
+            )
             if equity_peak > 0:
-                max_drawdown = max(max_drawdown, (equity_peak - marked_equity) / equity_peak)
+                max_drawdown = max(
+                    max_drawdown,
+                    (equity_peak - marked_equity) / equity_peak,
+                    (equity_peak - adverse_equity) / equity_peak,
+                )
             age = i - position["entry_index"]
             if position["side"] == "BUY":
                 hit_sl = bar.low <= position["sl"]
