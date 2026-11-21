@@ -124,7 +124,7 @@ def xauusd_backtest(limit: int=1200, starting_balance: float=100.0, risk_percent
 def xauusd_broker_backtest(
     limit: int = 5000,
     starting_balance: float = 100.0,
-    risk_percent: float = 0.10,
+    risk_percent: float = 0.02,
     spread_usd: float = 0.26,
     slippage_usd_per_side: float = 0.02,
     commission_rate_per_side: float = 0.0,
