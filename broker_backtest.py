@@ -3,12 +3,25 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from math import isfinite
+from datetime import datetime, timezone
 
 from analysis_engine import analyze
 from broker_execution import calculate_position_size
 from frvp import calculate_frvp
 from market_models import Candle
 from gold_backtest import _resample
+
+M5_INTERVAL_MS = 5 * 60 * 1000
+
+
+def _utc_day(timestamp_ms: int) -> str:
+    """Return the UTC calendar day for a millisecond candle timestamp."""
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date().isoformat()
+
+
+def _is_data_gap(previous, current) -> bool:
+    """True when two consecutive supplied candles are not exactly 5 minutes apart."""
+    return current.open_time - previous.open_time != M5_INTERVAL_MS
 
 
 def _validate(candles, starting_balance, risk_percent, spread_usd,
@@ -20,8 +33,8 @@ def _validate(candles, starting_balance, risk_percent, spread_usd,
             slippage_usd_per_side, commission_rate_per_side)
     if not all(isfinite(float(x)) for x in vals):
         raise ValueError("Backtest inputs must be finite")
-    if starting_balance <= 0 or not 0 < risk_percent <= 0.10:
-        raise ValueError("starting_balance must be positive and risk_percent in (0, 0.10]")
+    if starting_balance <= 0 or not 0 < risk_percent <= 0.02:
+        raise ValueError("starting_balance must be positive and risk_percent in (0, 0.02]")
     if min(spread_usd, slippage_usd_per_side, commission_rate_per_side) < 0:
         raise ValueError("Execution costs cannot be negative")
     if commission_rate_per_side >= 0.01:
@@ -38,7 +51,7 @@ def _closed_htf_at(bars, close_times, timestamp, max_bars):
 def run_broker_backtest(
     candles: list[Candle],
     starting_balance: float = 100.0,
-    risk_percent: float = 0.10,
+    risk_percent: float = 0.02,
     spread_usd: float = 0.26,
     slippage_usd_per_side: float = 0.02,
     commission_rate_per_side: float = 0.0,
@@ -232,7 +245,7 @@ def run_broker_backtest(
         "win_rate_percent": round(len(wins) / len(trades) * 100, 2) if trades else 0,
         "profit_factor": round(gross_profit / gross_loss, 3) if gross_loss else None,
         "max_drawdown_percent": round(max_drawdown * 100, 3),
-        "risk_percent_per_trade": risk_percent,
+        "risk_percent_per_trade": risk_percent,\n        "daily_loss_limit_percent": 3.0,\n        "data_gap_policy": "CLOSE_AT_PRE_GAP_CLOSE_AND_SKIP_GAP_BAR",
         "broker_model": {
             "broker": "JustMarkets", "account": "Standard",
             "contract_size_xau_per_lot": contract_size,
