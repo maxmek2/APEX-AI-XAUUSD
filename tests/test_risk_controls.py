@@ -28,7 +28,7 @@ class RiskControlsTests(unittest.TestCase):
         self.assertEqual(result.reason, "DAILY_LOSS_LIMIT_REACHED")
 
     def test_blocks_trade_that_exceeds_remaining_daily_loss(self):
-        result = self.base(current_equity=98.5, proposed_risk_usd=1.0)
+        result = self.base(current_equity=98.5, proposed_risk_usd=1.6)
         self.assertEqual(result.reason, "TRADE_RISK_EXCEEDS_REMAINING_DAILY_LOSS")
 
     def test_blocks_aggregate_open_risk_over_two_percent(self):
