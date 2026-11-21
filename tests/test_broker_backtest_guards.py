@@ -1,13 +1,33 @@
 """Regression tests for conservative broker backtest guards."""
 import unittest
 
-from broker_backtest import _is_data_gap, _utc_day, _validate
+from broker_backtest import _is_data_gap, _mark_to_market_equity, _utc_day, _validate
 from market_models import Candle
 
 
 class BrokerBacktestGuardTests(unittest.TestCase):
     def candle(self, open_time):
         return Candle(open_time, 2000, 2001, 1999, 2000, 100, open_time + 299999)
+
+    def test_mark_to_market_equity_includes_unrealized_loss_and_exit_costs(self):
+        position = {
+            "side": "BUY",
+            "entry_fill": 2001.0,
+            "quantity_xau": 1.0,
+        }
+        equity = _mark_to_market_equity(
+            99.0, position, 1999.0,
+            spread_half=0.13,
+            slippage_usd_per_side=0.02,
+            commission_rate_per_side=0.0,
+        )
+        self.assertAlmostEqual(equity, 96.85)
+
+    def test_flat_mark_to_market_equity_equals_balance(self):
+        self.assertEqual(
+            _mark_to_market_equity(98.5, None, 2000.0, 0.13, 0.02, 0.0),
+            98.5,
+        )
 
     def test_five_minute_sequence_is_not_a_gap(self):
         self.assertFalse(_is_data_gap(self.candle(0), self.candle(300000)))
