@@ -28,7 +28,7 @@ class BrokerBacktestTests(unittest.TestCase):
             result = run_broker_backtest(candles)
         self.assertFalse(result["real_orders_enabled"])
         self.assertEqual(result["execution"], "BACKTEST_ONLY")
-        self.assertEqual(result["risk_percent_per_trade"], 0.10)
+        self.assertEqual(result["risk_percent_per_trade"], 0.02)
         self.assertEqual(result["broker_model"]["minimum_lot"], 0.01)
         self.assertEqual(result["broker_model"]["spread_usd_assumption"], 0.26)
         self.assertEqual(result["trades"], 0)
