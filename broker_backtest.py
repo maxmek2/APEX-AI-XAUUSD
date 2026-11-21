@@ -9,6 +9,7 @@ from analysis_engine import analyze
 from broker_execution import calculate_position_size
 from frvp import calculate_frvp
 from market_models import Candle
+from risk_controls import evaluate_risk_limits
 from gold_backtest import _resample
 
 M5_INTERVAL_MS = 5 * 60 * 1000
@@ -209,6 +210,20 @@ def run_broker_backtest(
         )
         if not size.accepted:
             counts["rejected_minimum_lot"] += 1
+            continue
+
+        portfolio_gate = evaluate_risk_limits(
+            current_equity=balance,
+            day_start_equity=utc_day_start_balance,
+            open_positions=0,
+            open_risk_usd=0.0,
+            proposed_risk_usd=size.estimated_risk_usd,
+            max_positions=1,
+            daily_loss_fraction=daily_loss_limit_fraction,
+            max_total_risk_fraction=0.02,
+        )
+        if not portfolio_gate.accepted:
+            counts["rejected_portfolio_risk"] += 1
             continue
 
         entry_fill = entry_reference + direction * (spread_half + slippage_usd_per_side)
