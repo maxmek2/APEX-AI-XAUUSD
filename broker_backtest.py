@@ -99,6 +99,9 @@ def run_broker_backtest(
         "rejected_mtf": 0, "rejected_frvp": 0,
         "rejected_invalid_stops": 0, "rejected_minimum_lot": 0,
         "accepted_entries": 0,
+        "rejected_daily_loss_lock": 0,
+        "exited_before_data_gap": 0,
+        "rejected_portfolio_risk": 0,
     }
     spread_half = spread_usd / 2.0
 
@@ -126,8 +129,29 @@ def run_broker_backtest(
             max_drawdown = max(max_drawdown, (equity_peak - balance) / equity_peak)
         position = None
 
+    daily_loss_limit_fraction = 0.03
+    current_utc_day = _utc_day(candles[720].open_time)
+    utc_day_start_balance = balance
+
     for i in range(720, len(candles) - 1):
         bar = candles[i]
+        bar_day = _utc_day(bar.open_time)
+
+        # A missing M5 bar invalidates intrabar stop/target assumptions.
+        # Flatten at the last known close, then skip the first bar after the gap.
+        if i > 0 and _is_data_gap(candles[i - 1], bar):
+            if position:
+                close_position(candles[i - 1].close, "DATA_GAP", candles[i - 1], i - 1)
+                counts["exited_before_data_gap"] += 1
+            if bar_day != current_utc_day:
+                current_utc_day = bar_day
+                utc_day_start_balance = balance
+            continue
+
+        if bar_day != current_utc_day:
+            current_utc_day = bar_day
+            utc_day_start_balance = balance
+
         if position:
             age = i - position["entry_index"]
             if position["side"] == "BUY":
@@ -223,7 +247,10 @@ def run_broker_backtest(
             max_total_risk_fraction=0.02,
         )
         if not portfolio_gate.accepted:
-            counts["rejected_portfolio_risk"] += 1
+            if portfolio_gate.reason in ("DAILY_LOSS_LIMIT_REACHED", "TRADE_RISK_EXCEEDS_REMAINING_DAILY_LOSS"):
+                counts["rejected_daily_loss_lock"] += 1
+            else:
+                counts["rejected_portfolio_risk"] += 1
             continue
 
         entry_fill = entry_reference + direction * (spread_half + slippage_usd_per_side)
@@ -260,7 +287,9 @@ def run_broker_backtest(
         "win_rate_percent": round(len(wins) / len(trades) * 100, 2) if trades else 0,
         "profit_factor": round(gross_profit / gross_loss, 3) if gross_loss else None,
         "max_drawdown_percent": round(max_drawdown * 100, 3),
-        "risk_percent_per_trade": risk_percent,\n        "daily_loss_limit_percent": 3.0,\n        "data_gap_policy": "CLOSE_AT_PRE_GAP_CLOSE_AND_SKIP_GAP_BAR",
+        "risk_percent_per_trade": risk_percent,
+        "daily_loss_limit_percent": 3.0,
+        "data_gap_policy": "CLOSE_AT_PRE_GAP_CLOSE_AND_SKIP_GAP_BAR",
         "broker_model": {
             "broker": "JustMarkets", "account": "Standard",
             "contract_size_xau_per_lot": contract_size,
