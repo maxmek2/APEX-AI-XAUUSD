@@ -50,9 +50,9 @@ A separate broker-aware engine is available at:
 GET /api/xauusd/backtest/broker
 ```
 
-Defaults are a $100 starting balance, 10% **research-only** risk budget per trade,
+Defaults are a $100 starting balance, 2% maximum research risk budget per trade,
 $0.26 assumed spread, $0.02 assumed slippage per side, 0% commission until the
-account's actual commission schedule is verified, and a 24-bar maximum hold.
+account's actual commission schedule is verified, a 3% UTC-day realized-loss lock, a pre-gap exit policy, and a 24-bar maximum hold.
 The engine models the JustMarkets Standard contract as 100 XAU per lot, 0.01
 minimum lot and 0.01 lot step. It rejects trades when the minimum lot would
 exceed the risk budget. These are backtest assumptions, not a live quote or
