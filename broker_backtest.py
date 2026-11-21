@@ -287,7 +287,9 @@ def run_broker_backtest(
         "win_rate_percent": round(len(wins) / len(trades) * 100, 2) if trades else 0,
         "profit_factor": round(gross_profit / gross_loss, 3) if gross_loss else None,
         "max_drawdown_percent": round(max_drawdown * 100, 3),
-        "risk_percent_per_trade": risk_percent,\n        "daily_loss_limit_percent": 3.0,\n        "data_gap_policy": "CLOSE_AT_PRE_GAP_CLOSE_AND_SKIP_GAP_BAR",
+        "risk_percent_per_trade": risk_percent,
+        "daily_loss_limit_percent": 3.0,
+        "data_gap_policy": "CLOSE_AT_PRE_GAP_CLOSE_AND_SKIP_GAP_BAR",
         "broker_model": {
             "broker": "JustMarkets", "account": "Standard",
             "contract_size_xau_per_lot": contract_size,
