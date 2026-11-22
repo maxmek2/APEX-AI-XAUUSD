@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from threading import RLock
-from time import time, localtime, strftime
+from time import time, gmtime, strftime
 from math import isfinite
 
 
@@ -89,7 +89,7 @@ class PaperEngine:
         self._lock = RLock()
 
     def _today(self):
-        return strftime("%Y-%m-%d", localtime())
+        return strftime("%Y-%m-%d", gmtime())
 
     def _daily_realized_pnl(self):
         today = self._today()
@@ -320,7 +320,7 @@ class PaperEngine:
                 "pnl": round(net_pnl, 4),
                 "closed_at": closed_at,
                 "date": strftime(
-                    "%Y-%m-%d", localtime(closed_at)
+                    "%Y-%m-%d", gmtime(closed_at)
                 ),
                 "mode": "PAPER_ONLY",
             }
