@@ -30,7 +30,7 @@ The Stage 5.1 PDF tests BTC/USD with Alpaca data. This repository README and sou
 
 ### F-02 — Paper daily-loss day boundary uses host local time (medium)
 
-`paper_engine.py` imports `localtime` and uses it in both `_today()` and close-trade date stamping. The broker-aware backtest uses explicit UTC-day accounting. If the paper service host timezone differs from UTC, its daily loss lock can reset on a different boundary. Recommended fix: use UTC consistently for paper trade date stamps and daily aggregation, then add a regression test around a UTC date rollover.
+`paper_engine.py` imports `localtime` and uses it in both `_today()` and close-trade date stamping. The broker-aware backtest uses explicit UTC-day accounting. If the paper service host timezone differs from UTC, its daily loss lock can reset on a different boundary. Implemented on this branch: paper trade date stamps and daily aggregation now use UTC via `gmtime`; `test_paper_engine_utc.py` adds regression coverage for the UTC day stamp and daily P/L aggregation. The test suite still needs to be run in CI/Render before merge.
 
 ### F-03 — Paper position monitoring is caller-driven (medium)
 
@@ -72,4 +72,4 @@ The README documents a 100 XAU/lot contract, 0.01 minimum lot and 0.01 lot step,
 
 **NOT VALIDATED — DO NOT PROMOTE TO AUTOMATED EXECUTION.**
 
-This branch records the audit and remediation plan only. It does not claim a profitable strategy, does not change strategy parameters, and does not activate paper or live execution.
+This branch contains the audit, the UTC paper-account date fix, and regression tests. It does not claim a profitable strategy, does not change strategy parameters, and does not activate paper or live execution. The new tests have been added but have not been executed in this session.
